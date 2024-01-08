@@ -1,21 +1,17 @@
+// server.c
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
 #include <strings.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <signal.h>
 #include "pos_sockets/active_socket.h"
 #include "pos_sockets/passive_socket.h"
 #include "pos_sockets/char_buffer.h"
 
-volatile sig_atomic_t stop_server = 0;
 
-void handle_signal(int signo) {
-    if (signo == SIGINT) {
-        stop_server = 1;
-    }
-}
+
 
 typedef struct game_state {
     struct char_buffer state_buffer;
@@ -32,6 +28,7 @@ void game_state_destroy(GAME_STATE_DATA *game_state) {
 void game_state_append(GAME_STATE_DATA *game_state, const char *new_data) {
     char_buffer_append(&game_state->state_buffer, new_data, strlen(new_data));
 }
+
 
 typedef struct thread_data {
     ACTIVE_SOCKET* my_socket;
@@ -53,13 +50,16 @@ void* process_client_data(void* thread_data) {
     passive_socket_init(&p_socket);
     passive_socket_start_listening(&p_socket, 13569);
 
-    while (!stop_server) {
+    while(1) {
+
+
         passive_socket_wait_for_client(&p_socket, data->my_socket);
 
         printf("Klient bol pripojeny!\n");
         active_socket_start_reading(data->my_socket);
         sleep(1);
     }
+
     passive_socket_stop_listening(&p_socket);
     passive_socket_destroy(&p_socket);
 
@@ -109,6 +109,7 @@ void send_game_state_to_client(ACTIVE_SOCKET* my_socket, GAME_STATE_DATA* game_s
         active_socket_write_data(my_socket, &message_buffer);
         char_buffer_destroy(&message_buffer);
     }
+
 }
 
 void *consume(void *thread_data) {
@@ -119,24 +120,24 @@ void *consume(void *thread_data) {
     game_state_init(&game_state);
     game_state_init(&client_game_state);
 
-    while (!stop_server) {
+    while (1) {
         if (data->my_socket != NULL) {
             if (try_get_client_game_state(data->my_socket, &client_game_state)) {
                 printf("Received game state from client:\n%s\n", client_game_state.state_buffer.data);
             }
             send_game_state_to_client(data->my_socket, &client_game_state);
         }
-        sleep(1);
+        sleep(5);
     }
+
     game_state_destroy(&game_state);
     game_state_destroy(&client_game_state);
 
     return NULL;
 }
 
-int main(int argc, char* argv[]) {
-    signal(SIGINT, handle_signal);
 
+int main(int argc, char* argv[]) {
     pthread_t th_receive;
     struct thread_data data;
     struct active_socket my_socket;
@@ -145,12 +146,7 @@ int main(int argc, char* argv[]) {
     thread_data_init(&data, 100000, &my_socket);
 
     pthread_create(&th_receive, NULL, process_client_data, &data);
-
-    while (!stop_server) {
-        sleep(1);
-    }
-
-    pthread_cancel(th_receive);
+    consume(&data);
 
     pthread_join(th_receive, NULL);
 
